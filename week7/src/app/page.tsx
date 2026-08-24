@@ -8,7 +8,7 @@ export default function Home() {
         <h1 className="text-2xl font-semibold tracking-tight">
           AI Workflow Visualizer
         </h1>
-        <Badge variant="secondary">Phase 2: Foundations</Badge>
+        <Badge variant="secondary">Phase 4: End Product</Badge>
       </div>
       <p className="max-w-2xl text-muted-foreground">
         Each node is an AI decision step that resolves to YES or NO. Edit a

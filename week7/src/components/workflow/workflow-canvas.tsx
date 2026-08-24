@@ -122,6 +122,7 @@ export function WorkflowCanvas() {
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   const [executionResult, setExecutionResult] =
     useState<ExecutionResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const pollGeneration = useRef(0);
 
   // Load any saved graph after mount so the server-rendered markup always
@@ -152,7 +153,12 @@ export function WorkflowCanvas() {
   useEffect(() => {
     if (!hydrated) return;
     const timeout = setTimeout(() => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
+      } catch {
+        // Storage full or unavailable (e.g. private browsing) -- the graph
+        // still works in-session, it just won't survive a refresh.
+      }
     }, 300);
     return () => clearTimeout(timeout);
   }, [nodes, edges, hydrated]);
@@ -190,17 +196,30 @@ export function WorkflowCanvas() {
   }, [nodes.length, setNodes]);
 
   const resetGraph = useCallback(() => {
-    window.localStorage.removeItem(STORAGE_KEY);
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Storage unavailable -- nothing to clear, the in-memory reset below
+      // still takes effect.
+    }
     setNodes(initialNodes);
     setEdges(initialEdges);
     setRunStatus("idle");
     setExecutionResult(null);
+    setRunError(null);
   }, [setNodes, setEdges]);
 
   const runWorkflow = useCallback(async () => {
+    if (!nodes.some((node) => node.type === "start")) {
+      setRunStatus("failed");
+      setRunError("Add a Start node before running the workflow.");
+      return;
+    }
+
     const generation = ++pollGeneration.current;
     setRunStatus("running");
     setExecutionResult(null);
+    setRunError(null);
 
     try {
       const startRes = await fetch("/api/workflow/run", {
@@ -208,7 +227,13 @@ export function WorkflowCanvas() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodes, edges }),
       });
-      const { requestId, eventId } = await startRes.json();
+      const startBody = await startRes.json();
+      if (!startRes.ok) {
+        setRunStatus("failed");
+        setRunError(startBody.error ?? `Request failed (${startRes.status})`);
+        return;
+      }
+      const { requestId, eventId } = startBody;
 
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
         if (pollGeneration.current !== generation) return; // superseded
@@ -228,12 +253,23 @@ export function WorkflowCanvas() {
         }
         if (poll.status === "failed") {
           setRunStatus("failed");
+          setRunError(poll.error ?? "The run failed.");
           return;
         }
       }
       setRunStatus("failed");
-    } catch {
-      if (pollGeneration.current === generation) setRunStatus("failed");
+      setRunError(
+        `No result after ${(MAX_POLL_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s -- the run may still be in progress. Check the Inngest dashboard (localhost:8288).`,
+      );
+    } catch (cause) {
+      if (pollGeneration.current === generation) {
+        setRunStatus("failed");
+        setRunError(
+          cause instanceof Error
+            ? `Network error: ${cause.message}`
+            : "Network error while running the workflow.",
+        );
+      }
     }
   }, [nodes, edges]);
 
@@ -293,6 +329,7 @@ export function WorkflowCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        colorMode="dark"
         fitView
       >
         <Background />
@@ -334,8 +371,8 @@ export function WorkflowCanvas() {
               <CardContent className="flex flex-col gap-2 px-3 text-sm">
                 {runStatus === "failed" && (
                   <p className="text-destructive">
-                    The run failed or timed out. Check the Inngest dev
-                    dashboard (localhost:8288) for details.
+                    {runError ??
+                      "The run failed. Check the Inngest dev dashboard (localhost:8288) for details."}
                   </p>
                 )}
                 {executionResult?.trace.map((step, i) => (
@@ -358,11 +395,15 @@ export function WorkflowCanvas() {
                     Outcome: {executionResult.outcome.label}
                   </p>
                 )}
-                {executionResult && !executionResult.outcome && (
-                  <p className="text-muted-foreground">
-                    No outcome reached ({executionResult.status}).
-                  </p>
-                )}
+                {executionResult &&
+                  !executionResult.outcome &&
+                  (executionResult.error ? (
+                    <p className="text-destructive">{executionResult.error}</p>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      No outcome reached ({executionResult.status}).
+                    </p>
+                  ))}
               </CardContent>
             </Card>
           </Panel>

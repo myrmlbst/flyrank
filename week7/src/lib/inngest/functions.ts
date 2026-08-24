@@ -1,7 +1,15 @@
 import type { WorkflowEdge, WorkflowNode } from "@/components/workflow/types";
 import { classifyYesNo } from "./classify";
 import { inngest } from "./client";
-import { findEdgeFrom, findStartNode, MAX_STEPS, nodeById, type ExecutionResult, type ExecutionStep } from "./graph";
+import {
+  findEdgeFrom,
+  findStartNode,
+  MAX_STEPS,
+  nodeById,
+  validateGraph,
+  type ExecutionResult,
+  type ExecutionStep,
+} from "./graph";
 
 // Smoke-test function: proves the Inngest dev server, event flow, and OpenAI
 // SDK are wired together end to end.
@@ -34,9 +42,26 @@ export const runWorkflow = inngest.createFunction(
         data: { requestId: event.data.requestId, result },
       });
 
+    const inputError = validateGraph(nodes, edges);
+    if (inputError) {
+      const result = {
+        trace: [],
+        outcome: null,
+        status: "invalid-input",
+        error: inputError,
+      } satisfies ExecutionResult;
+      await publishResult(result);
+      return result;
+    }
+
     const start = findStartNode(nodes);
     if (!start) {
-      const result = { trace: [], outcome: null, status: "no-start" } satisfies ExecutionResult;
+      const result = {
+        trace: [],
+        outcome: null,
+        status: "no-start",
+        error: "Graph has no Start node",
+      } satisfies ExecutionResult;
       await publishResult(result);
       return result;
     }
@@ -62,9 +87,28 @@ export const runWorkflow = inngest.createFunction(
 
       if (node.type !== "decision") break;
 
-      const answer = await step.run(`node-${node.id}`, () =>
-        classifyYesNo(node.data.prompt),
-      );
+      // step.run already retries transient failures on its own (with
+      // backoff) before giving up -- this catch only fires once it has
+      // truly exhausted those attempts, or hit a non-retriable error like
+      // an empty prompt. Reported as a normal (non-"failed") result so the
+      // frontend gets a specific reason instead of a generic timeout.
+      let answer;
+      try {
+        answer = await step.run(`node-${node.id}`, () =>
+          classifyYesNo(node.data.prompt),
+        );
+      } catch (cause) {
+        const result = {
+          trace,
+          outcome: null,
+          status: "error",
+          error: `"${node.data.label}" (${node.id}) failed: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+        } satisfies ExecutionResult;
+        await publishResult(result);
+        return result;
+      }
 
       trace.push({
         nodeId: node.id,
@@ -77,7 +121,12 @@ export const runWorkflow = inngest.createFunction(
       edge = findEdgeFrom(edges, node.id, branch);
 
       if (!edge) {
-        const result = { trace, outcome: null, status: "dead-end" } satisfies ExecutionResult;
+        const result = {
+          trace,
+          outcome: null,
+          status: "dead-end",
+          error: `"${node.data.label}" has no ${branch.toUpperCase()} edge`,
+        } satisfies ExecutionResult;
         await publishResult(result);
         return result;
       }
@@ -87,6 +136,10 @@ export const runWorkflow = inngest.createFunction(
       trace,
       outcome: null,
       status: hops >= MAX_STEPS ? "max-steps-exceeded" : "dead-end",
+      error:
+        hops >= MAX_STEPS
+          ? `Stopped after ${MAX_STEPS} hops -- check the graph for a cycle`
+          : "Reached a node with no further edge",
     } satisfies ExecutionResult;
     await publishResult(result);
     return result;

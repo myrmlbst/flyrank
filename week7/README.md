@@ -30,10 +30,20 @@ TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
 - [x] End-to-end workflow execution, dynamic node traversal, AI-powered
       branching logic — verified via the demo graph and a custom two-hop
       graph (see "Try it" above)
-### (Phase 3: Build/Polish)
-- [] Better node styling
-- [] Error handling
-- [] Animated active edges
+### (Phase 4: Build/Polish)
+- [x] Better node styling
+- [x] Error handling
+- [x] Animated active edges
+
+## Screenshots
+**Workflow Execution**
+![Workflow run resulting in Auto-approve](public/imgs/C9AF8C99-A4A6-4BED-9700-A326C0509CB9.jpeg)
+
+**Workflow Execution**
+![Workflow run resulting in Add to backlog](public/imgs/CE48DBA8-F44F-46C8-931A-3BF2203949E7.jpeg)
+
+**Inngest Server History (Proof It's Running)**
+![Inngest dashboard showing completed workflow runs](public/imgs/1F00825E-60BF-4B12-BF2A-6E44952F14CC.jpeg)
 
 ## What's Included
 - `src/app/api/inngest/route.ts` registers the Inngest client with the
@@ -101,6 +111,33 @@ TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
   highlights the exact path taken (nodes get a ring, traversed edges get
   thicker + animated) and shows an execution panel with the ordered
   decision trace and final outcome.
+- **`classifyYesNo`** (`src/lib/inngest/classify.ts`) — real client timeout
+  (15s) with the OpenAI SDK's own retries switched off, since `step.run`
+  already retries transient failures with backoff; leaving both on would
+  silently multiply the number of real HTTP calls. An empty prompt is
+  raised as `NonRetriableError` (permanent, retrying won't fix it) so it
+  fails immediately instead of burning retry attempts.
+- **`runWorkflow`** (`src/lib/inngest/functions.ts`) — validates the graph
+  shape up front (`validateGraph` in `graph.ts`) before touching Inngest.
+  Each per-node model call is wrapped so a failure (after `step.run`'s own
+  retries are exhausted, or a non-retriable error) turns into a clean
+  `{status: "error", error: "..."}` result naming the node, instead of
+  leaving the whole run in a generic "Failed" state. Dead ends and the
+  max-hops guard now carry a human-readable `error` message too.
+- **`POST /api/workflow/run`** — catches invalid JSON and validates
+  `nodes`/`edges` before sending anything to Inngest (400 with a specific
+  message); catches `inngest.send` failures, e.g. the dev server not
+  running, and returns 502 with a message that says so.
+- **`GET /api/workflow/run/[requestId]`** — catches the Inngest dev server
+  being unreachable (was previously an uncaught `fetch` rejection ->
+  generic 500) and reports it through the same `{status: "failed", error}`
+  shape the frontend already polls for.
+- **Frontend** (`workflow-canvas.tsx`) — a `runError` message is now shown
+  in the execution panel instead of a generic "failed" line: input
+  validation errors, the specific node/reason a run didn't reach an
+  outcome, dev-server-unreachable, and a client-side pre-flight check (no
+  Start node -> immediate error, no network round trip). `localStorage`
+  writes are now wrapped in try/catch too (quota/private-browsing).
 
 ### Try it
 With both dev servers running (see "Run it" above), click **Run workflow**
@@ -190,6 +227,3 @@ slower than later ones.
 `INNGEST_DEV=1` (set in `.env.local`) tells the SDK it's talking to the local
 dev server instead of Inngest Cloud, so it skips signing-key verification.
 Don't set it in production.
-
----
-
