@@ -21,6 +21,7 @@ function BranchEdge({
   sourcePosition,
   targetPosition,
   markerEnd,
+  style,
   branch,
 }: EdgeProps<BranchEdgeType> & { branch: "yes" | "no" }) {
   const [edgePath, labelX, labelY] = getSmoothStepPath({
@@ -39,7 +40,7 @@ function BranchEdge({
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
-        style={{ stroke, strokeWidth: 2 }}
+        style={{ stroke, strokeWidth: 2, ...style }}
       />
       <EdgeLabelRenderer>
         <div

@@ -1,30 +1,94 @@
-import OpenAI from "openai";
+import type { WorkflowEdge, WorkflowNode } from "@/components/workflow/types";
+import { classifyYesNo } from "./classify";
 import { inngest } from "./client";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { findEdgeFrom, findStartNode, MAX_STEPS, nodeById, type ExecutionResult, type ExecutionStep } from "./graph";
 
 // Smoke-test function: proves the Inngest dev server, event flow, and OpenAI
-// SDK are wired together end to end. Real decision-node functions land in a
-// later phase.
+// SDK are wired together end to end.
 export const decisionStep = inngest.createFunction(
   { id: "decision-step", triggers: { event: "workflow/decision.requested" } },
   async ({ event, step }) => {
-    const answer = await step.run("ask-openai", async () => {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a decision node in a workflow graph. Answer with exactly one word: YES or NO.",
-          },
-          { role: "user", content: event.data.question },
-        ],
-      });
-
-      return completion.choices[0]?.message?.content?.trim() ?? "NO";
-    });
+    const answer = await step.run("ask-openai", () =>
+      classifyYesNo(event.data.question),
+    );
 
     return { question: event.data.question, answer };
+  },
+);
+
+// Executes a full workflow graph: starting from the Start node, each
+// decision node's prompt becomes its own Inngest step (so a crash/retry
+// resumes from the last completed node instead of re-running the whole
+// walk), and the model's YES/NO answer picks which edge to follow next.
+// Stops at an Outcome node, a decision node with no edge for the branch
+// it picked, or after MAX_STEPS hops (guards against a cyclic graph).
+export const runWorkflow = inngest.createFunction(
+  { id: "run-workflow", triggers: { event: "workflow/execute.requested" } },
+  async ({ event, step }) => {
+    const nodes = event.data.nodes as WorkflowNode[];
+    const edges = event.data.edges as WorkflowEdge[];
+
+    const publishResult = (result: ExecutionResult) =>
+      step.sendEvent("publish-result", {
+        name: "workflow/execute.completed",
+        data: { requestId: event.data.requestId, result },
+      });
+
+    const start = findStartNode(nodes);
+    if (!start) {
+      const result = { trace: [], outcome: null, status: "no-start" } satisfies ExecutionResult;
+      await publishResult(result);
+      return result;
+    }
+
+    const trace: ExecutionStep[] = [];
+    let edge = findEdgeFrom(edges, start.id);
+    let hops = 0;
+
+    while (edge && hops < MAX_STEPS) {
+      hops += 1;
+      const node = nodeById(nodes, edge.target);
+      if (!node) break;
+
+      if (node.type === "outcome") {
+        const result = {
+          trace,
+          outcome: { nodeId: node.id, label: node.data.label },
+          status: "completed",
+        } satisfies ExecutionResult;
+        await publishResult(result);
+        return result;
+      }
+
+      if (node.type !== "decision") break;
+
+      const answer = await step.run(`node-${node.id}`, () =>
+        classifyYesNo(node.data.prompt),
+      );
+
+      trace.push({
+        nodeId: node.id,
+        label: node.data.label,
+        prompt: node.data.prompt,
+        answer,
+      });
+
+      const branch = answer === "YES" ? "yes" : "no";
+      edge = findEdgeFrom(edges, node.id, branch);
+
+      if (!edge) {
+        const result = { trace, outcome: null, status: "dead-end" } satisfies ExecutionResult;
+        await publishResult(result);
+        return result;
+      }
+    }
+
+    const result = {
+      trace,
+      outcome: null,
+      status: hops >= MAX_STEPS ? "max-steps-exceeded" : "dead-end",
+    } satisfies ExecutionResult;
+    await publishResult(result);
+    return result;
   },
 );

@@ -5,6 +5,36 @@ A visual AI workflow system where each node represents an AI decision step that 
 ## Tech Stack
 TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
 
+## Deliverables
+### (Phase 1: Setup)
+- [x] Running frontend application (`npm run dev`, verified `GET /` → 200)
+- [x] Working Inngest dev server (verified `GET /api/inngest` → `mode: dev`,
+      1 function discovered; dev dashboard reachable on :8288)
+- [x] Repository initialized with README
+### (Phase 2: Foundations)
+- [x] Render a React Flow canvas
+- [x] Adding nodes (toolbar button)
+- [x] Connecting nodes (drag between handles)
+- [x] Editing node prompts (inline textarea on decision nodes)
+- [x] Edge types: YES path (green) / NO path (red)
+- [x] Store graph state locally (`localStorage`, debounced autosave)
+### (Phase 3: Build/Core)
+- [x] Each node maps to an Inngest step (`step.run` per decision node)
+- [x] Node prompt sent to an LLM (`classifyYesNo`, OpenAI `gpt-4o-mini`)
+- [x] Model constrained to exactly YES or NO (system prompt + code-side
+      normalization of the reply)
+- [x] Execution continues based on the selected edge (`sourceHandle`
+      `yes`/`no` lookup after each answer)
+- [x] Execution order tracked (`trace` array, in the order nodes were
+      visited) and shown in the UI
+- [x] End-to-end workflow execution, dynamic node traversal, AI-powered
+      branching logic — verified via the demo graph and a custom two-hop
+      graph (see "Try it" above)
+### (Phase 3: Build/Polish)
+- [] Better node styling
+- [] Error handling
+- [] Animated active edges
+
 ## What's Included
 - `src/app/api/inngest/route.ts` registers the Inngest client with the
   Next.js route handler. Confirmed working: `GET /api/inngest` returns
@@ -34,21 +64,72 @@ TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
   - edit a decision node's prompt inline
   - graph state (nodes + edges) autosaves to `localStorage`
     (`ai-workflow-graph-v1`), debounced, and reloads on refresh
+- `src/lib/inngest/classify.ts` — `classifyYesNo(prompt)`, the single place
+  that calls OpenAI (`gpt-4o-mini`) and normalizes the reply to exactly
+  `YES`/`NO`. Shared by the Phase 1 smoke-test function and the real
+  workflow runner. `OPENAI_STUB=1` skips the real call and returns a
+  deterministic answer (hash of the prompt) so the whole pipeline can be
+  exercised with no API key and no spend.
+- `src/lib/inngest/graph.ts` — pure graph-traversal helpers
+  (`findStartNode`, `findEdgeFrom`, `nodeById`) and the `ExecutionResult`/
+  `ExecutionStep` types, kept separate from Inngest so the traversal logic
+  is plain, readable code.
+- `src/lib/inngest/functions.ts` — `runWorkflow`, triggered by
+  `workflow/execute.requested`. Starting from the Start node, it walks the
+  graph: **each decision node's prompt becomes its own `step.run`** (so a
+  crash/retry resumes from the last completed node instead of redoing the
+  whole walk), sends it to the model via `classifyYesNo`, and uses the
+  YES/NO answer to pick which edge to follow next. Stops at an Outcome
+  node, a decision node with no edge for the branch it picked, or after 25
+  hops (guards against a cyclic graph). Publishes its own
+  `workflow/execute.completed` event with the full result at the end.
+- `src/app/api/workflow/run/route.ts` (`POST`) — takes the current
+  `{ nodes, edges }` from the canvas, sends the `workflow/execute.requested`
+  event, returns `{ requestId, eventId }`.
+- `src/app/api/workflow/run/[requestId]/route.ts` (`GET`) — polled by the
+  frontend. Looks for the matching `workflow/execute.completed` event and
+  returns `{ status: "done", result }` once found; returns
+  `{ status: "failed" }` if the underlying Inngest run failed; otherwise
+  `{ status: "pending" }`.
 
-## Deliverables
-### (Phase 1)
-- [x] Running frontend application (`npm run dev`, verified `GET /` → 200)
-- [x] Working Inngest dev server (verified `GET /api/inngest` → `mode: dev`,
-      1 function discovered; dev dashboard reachable on :8288)
-- [x] Repository initialized with README
-### (Phase 2)
-- [x] Render a React Flow canvas
-- [x] Adding nodes (toolbar button)
-- [x] Connecting nodes (drag between handles)
-- [x] Editing node prompts (inline textarea on decision nodes)
-- [x] Edge types: YES path (green) / NO path (red)
-- [x] Store graph state locally (`localStorage`, debounced autosave)
+  Note: the Inngest dev server's REST API (`/v1/runs/:id`) doesn't reliably
+  populate a completed run's `output` field in this version, so status
+  polling deliberately doesn't depend on it — the workflow's own
+  `workflow/execute.completed` event is the source of truth for the result.
+- `src/components/workflow/workflow-canvas.tsx` — "▶ Run workflow" button:
+  posts the graph, polls every second (up to 30s) for a result, then
+  highlights the exact path taken (nodes get a ring, traversed edges get
+  thicker + animated) and shows an execution panel with the ordered
+  decision trace and final outcome.
 
+### Try it
+With both dev servers running (see "Run it" above), click **Run workflow**
+on the canvas. Example matching the assignment's sample graph:
+
+```bash
+curl -s -X POST http://localhost:3000/api/workflow/run -H "Content-Type: application/json" -d '{
+  "nodes": [
+    {"id":"start","type":"start","position":{"x":0,"y":0},"data":{"label":"Start"}},
+    {"id":"d1","type":"decision","position":{"x":0,"y":0},"data":{"label":"Decision","prompt":"Is this a support request?"}},
+    {"id":"o-support","type":"outcome","position":{"x":0,"y":0},"data":{"label":"Support Node"}},
+    {"id":"o-sales","type":"outcome","position":{"x":0,"y":0},"data":{"label":"Sales Node"}}
+  ],
+  "edges": [
+    {"id":"e1","source":"start","target":"d1"},
+    {"id":"e2","source":"d1","sourceHandle":"yes","target":"o-support","type":"yes"},
+    {"id":"e3","source":"d1","sourceHandle":"no","target":"o-sales","type":"no"}
+  ]
+}'
+# {"requestId":"...","eventId":"..."}
+
+curl -s "http://localhost:3000/api/workflow/run/<requestId>?eventId=<eventId>"
+# {"status":"done","result":{"outcome":{"nodeId":"o-support","label":"Support Node"},
+#   "status":"completed","trace":[{"nodeId":"d1","label":"Decision",
+#   "prompt":"Is this a support request?","answer":"YES"}]}}
+```
+
+Verified working with both a single decision node and a two-decision-node
+chain (each hop got its own Inngest step, in the correct order).
 
 ---
 
@@ -109,3 +190,6 @@ slower than later ones.
 `INNGEST_DEV=1` (set in `.env.local`) tells the SDK it's talking to the local
 dev server instead of Inngest Cloud, so it skips signing-key verification.
 Don't set it in production.
+
+---
+

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -14,7 +14,11 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { findEdgeFrom } from "@/lib/inngest/graph";
+import type { ExecutionResult } from "@/lib/inngest/graph";
 import { DecisionNodeComponent } from "./nodes/decision-node";
 import { OutcomeNodeComponent } from "./nodes/outcome-node";
 import { StartNodeComponent } from "./nodes/start-node";
@@ -28,6 +32,8 @@ const nodeTypes: NodeTypes = {
 };
 
 const STORAGE_KEY = "ai-workflow-graph-v1";
+const POLL_INTERVAL_MS = 1000;
+const MAX_POLL_ATTEMPTS = 30;
 
 const initialNodes: WorkflowNode[] = [
   {
@@ -103,6 +109,8 @@ const initialEdges: WorkflowEdge[] = [
   },
 ];
 
+type RunStatus = "idle" | "running" | "done" | "failed";
+
 export function WorkflowCanvas() {
   const [nodes, setNodes, onNodesChange] =
     useNodesState<WorkflowNode>(initialNodes);
@@ -110,6 +118,11 @@ export function WorkflowCanvas() {
     useEdgesState<WorkflowEdge>(initialEdges);
   const [hydrated, setHydrated] = useState(false);
   const nodeCounter = useRef(0);
+
+  const [runStatus, setRunStatus] = useState<RunStatus>("idle");
+  const [executionResult, setExecutionResult] =
+    useState<ExecutionResult | null>(null);
+  const pollGeneration = useRef(0);
 
   // Load any saved graph after mount so the server-rendered markup always
   // matches the deterministic demo graph above (avoids a hydration mismatch).
@@ -144,6 +157,11 @@ export function WorkflowCanvas() {
     return () => clearTimeout(timeout);
   }, [nodes, edges, hydrated]);
 
+  // Cancel any in-flight poll loop on unmount.
+  useEffect(() => () => {
+    pollGeneration.current += 1;
+  }, []);
+
   const onConnect = useCallback(
     (connection: Connection) => {
       const branch = connection.sourceHandle === "no" ? "no" : "yes";
@@ -175,13 +193,101 @@ export function WorkflowCanvas() {
     window.localStorage.removeItem(STORAGE_KEY);
     setNodes(initialNodes);
     setEdges(initialEdges);
+    setRunStatus("idle");
+    setExecutionResult(null);
   }, [setNodes, setEdges]);
+
+  const runWorkflow = useCallback(async () => {
+    const generation = ++pollGeneration.current;
+    setRunStatus("running");
+    setExecutionResult(null);
+
+    try {
+      const startRes = await fetch("/api/workflow/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodes, edges }),
+      });
+      const { requestId, eventId } = await startRes.json();
+
+      for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
+        if (pollGeneration.current !== generation) return; // superseded
+
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        if (pollGeneration.current !== generation) return;
+
+        const pollRes = await fetch(
+          `/api/workflow/run/${requestId}?eventId=${eventId}`,
+        );
+        const poll = await pollRes.json();
+
+        if (poll.status === "done") {
+          setExecutionResult(poll.result as ExecutionResult);
+          setRunStatus("done");
+          return;
+        }
+        if (poll.status === "failed") {
+          setRunStatus("failed");
+          return;
+        }
+      }
+      setRunStatus("failed");
+    } catch {
+      if (pollGeneration.current === generation) setRunStatus("failed");
+    }
+  }, [nodes, edges]);
+
+  // Recompute which nodes/edges were actually visited on the last run, so
+  // the canvas can highlight the path the model traversed.
+  const { highlightedNodeIds, highlightedEdgeIds } = useMemo(() => {
+    const nodeIds = new Set<string>();
+    const edgeIds = new Set<string>();
+    if (!executionResult || executionResult.trace.length === 0) {
+      return { highlightedNodeIds: nodeIds, highlightedEdgeIds: edgeIds };
+    }
+
+    const start = nodes.find((node) => node.type === "start");
+    if (start) {
+      const firstEdge = findEdgeFrom(edges, start.id);
+      if (firstEdge) edgeIds.add(firstEdge.id);
+    }
+
+    for (const step of executionResult.trace) {
+      nodeIds.add(step.nodeId);
+      const branch = step.answer === "YES" ? "yes" : "no";
+      const nextEdge = findEdgeFrom(edges, step.nodeId, branch);
+      if (nextEdge) edgeIds.add(nextEdge.id);
+    }
+    if (executionResult.outcome) nodeIds.add(executionResult.outcome.nodeId);
+
+    return { highlightedNodeIds: nodeIds, highlightedEdgeIds: edgeIds };
+  }, [executionResult, nodes, edges]);
+
+  const decoratedNodes = useMemo(
+    () =>
+      nodes.map((node) =>
+        highlightedNodeIds.has(node.id)
+          ? { ...node, className: "ring-2 ring-primary ring-offset-2 rounded-xl" }
+          : node,
+      ),
+    [nodes, highlightedNodeIds],
+  );
+
+  const decoratedEdges = useMemo(
+    () =>
+      edges.map((edge) =>
+        highlightedEdgeIds.has(edge.id)
+          ? { ...edge, style: { strokeWidth: 5 }, animated: true }
+          : edge,
+      ),
+    [edges, highlightedEdgeIds],
+  );
 
   return (
     <div className="h-162.5 w-full rounded-lg border">
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={decoratedNodes}
+        edges={decoratedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -199,7 +305,68 @@ export function WorkflowCanvas() {
           <Button size="sm" variant="outline" onClick={resetGraph}>
             Reset
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={runWorkflow}
+            disabled={runStatus === "running"}
+          >
+            {runStatus === "running" ? "Running..." : "▶ Run workflow"}
+          </Button>
         </Panel>
+        {runStatus !== "idle" && (
+          <Panel position="top-right">
+            <Card className="w-80 gap-2 py-3">
+              <CardHeader className="flex items-center justify-between px-3">
+                <span className="text-sm font-semibold">Execution</span>
+                <Badge
+                  variant={
+                    runStatus === "failed"
+                      ? "destructive"
+                      : runStatus === "done"
+                        ? "default"
+                        : "secondary"
+                  }
+                >
+                  {runStatus}
+                </Badge>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2 px-3 text-sm">
+                {runStatus === "failed" && (
+                  <p className="text-destructive">
+                    The run failed or timed out. Check the Inngest dev
+                    dashboard (localhost:8288) for details.
+                  </p>
+                )}
+                {executionResult?.trace.map((step, i) => (
+                  <div key={step.nodeId} className="border-b pb-1 last:border-b-0">
+                    <span className="text-muted-foreground">{i + 1}.</span>{" "}
+                    &ldquo;{step.prompt}&rdquo; →{" "}
+                    <span
+                      className={
+                        step.answer === "YES"
+                          ? "font-semibold text-emerald-600"
+                          : "font-semibold text-destructive"
+                      }
+                    >
+                      {step.answer}
+                    </span>
+                  </div>
+                ))}
+                {executionResult?.outcome && (
+                  <p className="font-medium">
+                    Outcome: {executionResult.outcome.label}
+                  </p>
+                )}
+                {executionResult && !executionResult.outcome && (
+                  <p className="text-muted-foreground">
+                    No outcome reached ({executionResult.status}).
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );
