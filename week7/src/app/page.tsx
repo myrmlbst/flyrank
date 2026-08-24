@@ -8,12 +8,13 @@ export default function Home() {
         <h1 className="text-2xl font-semibold tracking-tight">
           AI Workflow Visualizer
         </h1>
-        <Badge variant="secondary">Phase 1: Setup</Badge>
+        <Badge variant="secondary">Phase 2: Foundations</Badge>
       </div>
       <p className="max-w-2xl text-muted-foreground">
-        Each node in the graph below represents an AI decision step that
-        resolves to YES or NO. Execution will run through Inngest; this
-        canvas is the React Flow scaffold the real workflow will render into.
+        Each node is an AI decision step that resolves to YES or NO. Edit a
+        node&apos;s prompt directly on the canvas, drag from a handle to wire
+        up new connections, and add more decision nodes with the toolbar.
+        The graph persists to your browser automatically.
       </p>
       <WorkflowCanvas />
     </div>

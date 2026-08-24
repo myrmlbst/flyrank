@@ -21,6 +21,19 @@ TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
   node-graph editor, not the final UI.
 - shadcn/ui is initialized (`components.json`, `button`, `card`, `badge`
   installed) for the node/panel UI in later phases.
+- `src/components/workflow/nodes/` — custom React Flow node types:
+  `start-node.tsx`, `decision-node.tsx` (editable prompt textarea, YES/NO
+  source handles), `outcome-node.tsx`.
+- `src/components/workflow/edges/branch-edge.tsx` — custom `yes`/`no` edge
+  types (green/red, labeled). Dragging a connection from a decision node's
+  YES or NO handle automatically assigns the matching edge type.
+- `src/components/workflow/types.ts` — shared node/edge data types.
+- `src/components/workflow/workflow-canvas.tsx` — now a real editor:
+  - "+ Add decision node" / "Reset" toolbar buttons (top-left panel)
+  - connect nodes by dragging between handles
+  - edit a decision node's prompt inline
+  - graph state (nodes + edges) autosaves to `localStorage`
+    (`ai-workflow-graph-v1`), debounced, and reloads on refresh
 
 ## Deliverables
 ### (Phase 1)
@@ -28,6 +41,13 @@ TypeScript, Next.js, Inngest, Shadcn, React Flow, OpenAI SDK
 - [x] Working Inngest dev server (verified `GET /api/inngest` → `mode: dev`,
       1 function discovered; dev dashboard reachable on :8288)
 - [x] Repository initialized with README
+### (Phase 2)
+- [x] Render a React Flow canvas
+- [x] Adding nodes (toolbar button)
+- [x] Connecting nodes (drag between handles)
+- [x] Editing node prompts (inline textarea on decision nodes)
+- [x] Edge types: YES path (green) / NO path (red)
+- [x] Store graph state locally (`localStorage`, debounced autosave)
 
 
 ---
