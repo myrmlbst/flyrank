@@ -1,0 +1,7 @@
+.claude/
+
+# repo-wide safety net -- every week has its own .gitignore for
+# venv/__pycache__/etc, but .env and .DS_Store are covered here for
+# every subdirectory in case any week-level .gitignore misses one
+.env
+.DS_Store

@@ -1,0 +1,42 @@
+[
+  {
+    "title": "Fix critical production outage affecting all customers right now",
+    "expected_priority": "high",
+    "note": "explicit, unambiguous emergency language"
+  },
+  {
+    "title": "Renew passport before the Nov 3 trip",
+    "expected_priority": "high",
+    "note": "concrete near-term deadline"
+  },
+  {
+    "title": "Reply to the CEO's email about tomorrow's board meeting",
+    "expected_priority": "high",
+    "note": "short deadline, high-stakes audience"
+  },
+  {
+    "title": "Review the Q3 budget spreadsheet before Friday's planning meeting",
+    "expected_priority": "medium",
+    "note": "ambiguous case -- has a deadline but is preparatory, not itself the emergency"
+  },
+  {
+    "title": "Update the team wiki with the new deploy steps",
+    "expected_priority": "medium",
+    "note": "useful soon, no hard deadline"
+  },
+  {
+    "title": "Buy milk",
+    "expected_priority": "low",
+    "note": "routine errand"
+  },
+  {
+    "title": "Someday maybe reorganize the garage",
+    "expected_priority": "low",
+    "note": "explicitly not time-bound"
+  },
+  {
+    "title": "asdkjf",
+    "expected_priority": "low",
+    "note": "when-unsure case -- gibberish, no urgency signal, should not be guessed as high"
+  }
+]
