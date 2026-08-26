@@ -15,6 +15,15 @@ A background job system, built up in stages starting from a plain API.
 - One function, `say-hello`, triggered by the `test/hello` event: sleeps 5s
   (`ctx.step.sleep`), then returns `"Hello from the background!"`
 
+## Stage 2: Accept now, work later
+- `POST /reports` (`{"topic": "cats"}`) makes an id, saves it `pending` in
+  an in-memory dict, sends `report/requested`, and returns `202` immediately
+  (`{"id", "status": "pending"}`) — no slow work on the request path.
+- `make-report` function, triggered by `report/requested`: `step.sleep` 8s,
+  then `step.run` builds the result and marks the report `done`.
+- `GET /reports/{id}` returns the saved object (`pending` -> `done` +
+  `result`); unknown id -> `404`.
+
 ## Running Locally
 ```bash
 source venv/bin/activate
