@@ -1,58 +1,82 @@
 # Week 7 (bg): Job System
 
-A background job system, built up in stages starting from a plain API.
-
-## Tech Stack
-- Python
-- FastAPI
-- Inngest
-
-## Stage 0: Hello, server
-- `GET /health` -> `{"status": "ok"}`
-
-## Stage 1: Connect Inngest
-- Inngest client (`app_id="report-api"`), served at `/api/inngest`
-- One function, `say-hello`, triggered by the `test/hello` event: sleeps 5s
-  (`ctx.step.sleep`), then returns `"Hello from the background!"`
-
-## Stage 2: Accept now, work later
-- `POST /reports` (`{"topic": "cats"}`) makes an id, saves it `pending` in
-  an in-memory dict, sends `report/requested`, and returns `202` immediately
-  (`{"id", "status": "pending"}`), no slow work on the request path.
-- `make-report` function, triggered by `report/requested`: `step.sleep` 8s,
-  then `step.run` builds the result and marks the report `done`.
-- `GET /reports/{id}` returns the saved object (`pending` -> `done` +
-  `result`); unknown id -> `404`.
-
-## Stage 3: Watch the retry 
-- `make-report` now has `retries=2`; the `build-report` step raises if
-  `topic == "fail"`, so a `{"topic": "fail"}` request runs the full
-  attempt-1 → backoff → attempt-2 → backoff → attempt-3 → `Failed` cycle,
-  visible in the dashboard.
-- `POST /reports` with no `topic` now returns `400` before anything is
-  saved or sent. No report, no event, no Inngest run.
-- The difference: a missing `topic` is wrong no matter when you send it, so
-  it's rejected at the door (`400`); a broken oven might work if you just
-  try again a moment later, so it's worth a retry.
-
-## Stage 4: The clock knocks (cron)
-- `heartbeat` is triggered by a cron schedule, not an event:
-  `inngest.TriggerCron(cron="* * * * *")` (every minute, for testing purposes).
-- Each run counts `reports` by status and prints/returns one line:
-  `heartbeat: N pending, N done, N failed`.
-- Every day at 08:00: `0 8 * * *`. Every Sunday at 22:00: `0 22 * * 0`
-  (built on crontab.guru; servers run cron in UTC, so check the timezone
-  before trusting either).
-- Caveat: `failed` always reads `0` for now. `make-report` never sets
-  `status: "failed"` after exhausting retries, it just stays `pending`
-  forever (see Stage 3).
+## What this is
+A FastAPI app that hands slow work off to Inngest instead of making the caller wait for it. `POST /reports` accepts a job and
+returns immediately (`202`); a background function does the actual work and
+a status endpoint lets the caller poll for the result. Built in stages: a
+plain health check, an Inngest-connected worker, the accept-now/work-later
+pattern, retries with backoff, and a cron heartbeat.
 
 ## Running Locally
+Two terminals: your API and the Inngest Dev Server:
+
 ```bash
+# terminal 1: the API
 source venv/bin/activate
 uvicorn main:app --port 8000
-# second terminal
+```
+
+```bash
+# terminal 2: the Dev Server
 npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
 ```
+
 Dashboard: http://localhost:8288
 
+## Endpoints
+| Method | Path            | Body               | Success | Errors                          |
+|--------|-----------------|--------------------|---------|----------------------------------|
+| GET    | `/health`       | —                  | `200` `{"status":"ok"}` | — |
+| POST   | `/reports`      | `{"topic": "cats"}` | `202` `{"id","status":"pending"}` | `400` if `topic` is missing/empty |
+| GET    | `/reports/{id}` | —                  | `200` the saved report (`pending` -> `done` + `result`) | `404` unknown id |
+
+## Functions
+| Function     | Trigger                        | What it does |
+|--------------|---------------------------------|---------------|
+| `say-hello`  | event `test/hello`              | Sleeps 5s, returns `"Hello from the background!"` |
+| `make-report`| event `report/requested`, `retries=2` | Sleeps 8s, then builds the report and marks it `done`. Raises if `topic == "fail"`, so that run retries up to 3 attempts before ending `Failed` |
+| `heartbeat`  | cron `* * * * *`                | Every minute, counts `reports` by status and logs/returns `"heartbeat: N pending, N done, N failed"` |
+
+## Proof: accept now, work later
+```
+$ curl -i -X POST http://localhost:8000/reports -H "Content-Type: application/json" -d '{"topic":"cats"}'
+HTTP/1.1 202 Accepted
+content-type: application/json
+
+{"id":"eefd962f-5c85-4f0d-a3f9-eddfc052272d","status":"pending"}
+
+$ curl -i http://localhost:8000/reports/eefd962f-5c85-4f0d-a3f9-eddfc052272d
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"id":"eefd962f-5c85-4f0d-a3f9-eddfc052272d","topic":"cats","status":"pending"}
+
+$ # ~10s later
+$ curl -i http://localhost:8000/reports/eefd962f-5c85-4f0d-a3f9-eddfc052272d
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"id":"eefd962f-5c85-4f0d-a3f9-eddfc052272d","topic":"cats","status":"done","result":"Report on 'cats': this is a stand-in for a real result."}
+```
+
+## Stage 3: Watch the retry
+A missing `topic` is wrong no matter when you send it, so it's rejected at
+the door (`400`, no report, no event, no run); a broken oven might work if
+you just try again a moment later, so it's worth a retry. `make-report`
+runs attempt 1 → backoff → attempt 2 → backoff → attempt 3 → `Failed`
+before giving up.
+
+## Stage 4: The clock knocks
+Every day at 08:00: `0 8 * * *`. Every Sunday at 22:00: `0 22 * * 0` (built
+on crontab.guru; servers run cron in UTC, so check the timezone before
+trusting either).
+
+Caveat: `failed` always reads `0` for now — `make-report` never sets
+`status: "failed"` after exhausting retries, it just stays `pending`
+forever.
+
+## Dashboard
+`say-hello`, `make-report` (including one `Failed` run from the retry
+test), and `heartbeat` ticking every minute:
+
+![Inngest dev server runs list](imgs/dashboard-runs.png)
