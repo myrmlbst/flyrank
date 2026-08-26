@@ -32,3 +32,4 @@ uvicorn main:app --port 8000
 npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
 ```
 Dashboard: http://localhost:8288
+

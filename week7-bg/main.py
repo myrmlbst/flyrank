@@ -71,3 +71,4 @@ def get_report(report_id: str):
 @app.get("/health", summary="Health check")
 def health():
     return {"status": "ok"}
+
