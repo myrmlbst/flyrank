@@ -24,6 +24,17 @@ A background job system, built up in stages starting from a plain API.
 - `GET /reports/{id}` returns the saved object (`pending` -> `done` +
   `result`); unknown id -> `404`.
 
+## Stage 3: Jobs fail. Watch the retry.
+- `make-report` now has `retries=2`; the `build-report` step raises if
+  `topic == "fail"`, so a `{"topic": "fail"}` request runs the full
+  attempt-1 → backoff → attempt-2 → backoff → attempt-3 → `Failed` cycle,
+  visible in the dashboard.
+- `POST /reports` with no `topic` now returns `400` before anything is
+  saved or sent — no report, no event, no Inngest run.
+- The difference: a missing `topic` is wrong no matter when you send it, so
+  it's rejected at the door (`400`); a broken oven might work if you just
+  try again a moment later, so it's worth a retry.
+
 ## Running Locally
 ```bash
 source venv/bin/activate
@@ -32,4 +43,3 @@ uvicorn main:app --port 8000
 npx inngest-cli@latest dev -u http://localhost:8000/api/inngest
 ```
 Dashboard: http://localhost:8288
-
