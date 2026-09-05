@@ -10,5 +10,12 @@ conn.execute("""
         created_at DATE NOT NULL
     )
 """)
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS reports (
+        id INTEGER PRIMARY KEY,
+        path TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+""")
 conn.commit()
 conn.close()
