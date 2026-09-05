@@ -48,3 +48,16 @@ def get_report_data(db_path: str = "report.db") -> dict:
         "top_products": top_products,
         "orders_per_day": orders_per_day,
     }
+
+
+def get_all_orders(db_path: str = "report.db") -> list[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT id, customer, product, amount, created_at FROM orders ORDER BY created_at, id"
+        )
+    ]
+    conn.close()
+    return rows
