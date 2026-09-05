@@ -1,11 +1,16 @@
 import sqlite3
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
-from render_report import DB_PATH, generate_report
+from render_report import DB_PATH, find_todays_report, generate_report
 
 app = FastAPI(title="PDF Print Service", version="1.0")
+
+
+class CreateReportRequest(BaseModel):
+    force: bool = False
 
 
 @app.get("/health", summary="Health check")
@@ -13,8 +18,16 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/reports", status_code=201, summary="Generate a report")
-def create_report():
+@app.post("/reports", status_code=201, summary="Generate a report (idempotent per day unless force)")
+def create_report(body: CreateReportRequest = CreateReportRequest()):
+    if not body.force:
+        existing_id = find_todays_report()
+        if existing_id is not None:
+            return JSONResponse(
+                status_code=200,
+                content={"id": existing_id, "file": f"/reports/{existing_id}/file"},
+            )
+
     report_id = generate_report()
     return {"id": report_id, "file": f"/reports/{report_id}/file"}
 

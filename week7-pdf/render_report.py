@@ -35,6 +35,15 @@ def render_pdf(output_path: str = OUTPUT_PATH, fix_page_breaks: bool = True) -> 
     print(f"Wrote {output_path}")
 
 
+def find_todays_report() -> int | None:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT id FROM reports WHERE date(created_at) = date('now') ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def generate_report() -> int:
     """Runs the full pipeline: query -> render -> bookkeeping row. Returns the report id."""
     conn = sqlite3.connect(DB_PATH)

@@ -43,3 +43,6 @@ total revenue, top 5 products by revenue, and orders per day for the last 7 days
 
 ## On Background Jobs
 I'd move report generation out of the request and into a background job (accept-now/work-later, as in `week7-bg`) once a single render regularly exceeds ~1-2s or the endpoint needs to serve more than one concurrent user, since a multi-second synchronous request ties up a worker thread and leaves every caller behind it waiting.
+
+## On Idempotency
+The daily check protects against duplicate work from retries, double-clicks, or a flaky client that resends a request it never got a response for, so the same intent doesn't silently multiply into extra files and rows. A missing check like this is exactly how a payment-processing job or a "send invoice" endpoint ends up emailing a customer the same bill twice, or a reconciliation script double-charges a card because a timeout made the caller retry a request that had actually already succeeded.
