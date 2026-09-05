@@ -32,6 +32,16 @@ def create_report(body: CreateReportRequest = CreateReportRequest()):
     return {"id": report_id, "file": f"/reports/{report_id}/file"}
 
 
+@app.get("/reports", summary="List all generated reports")
+def list_reports():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM reports ORDER BY id DESC").fetchall()
+    conn.close()
+
+    return [{**dict(row), "file": f"/reports/{row['id']}/file"} for row in rows]
+
+
 def _get_report_row(report_id: int) -> dict:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

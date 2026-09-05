@@ -19,6 +19,7 @@ uvicorn main:app --port 8000
 |--------|-----------------------|------|---------|--------|
 | GET    | `/health`             | —    | `200` `{"status":"ok"}` | — |
 | POST   | `/reports`            | `{"force": bool}` optional | `201` `{"id","file"}` on a new render, `200` with the existing id if one was already made today | — |
+| GET    | `/reports`            | —    | `200` a list of all generated reports, each with its file link | — |
 | GET    | `/reports/{id}`       | —    | `200` the bookkeeping row + file link | `404` unknown id |
 | GET    | `/reports/{id}/file`  | —    | `200` the PDF file | `404` unknown id |
 
