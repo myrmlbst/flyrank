@@ -63,4 +63,5 @@ def get_report(report_id: int):
 @app.get("/reports/{report_id}/file", summary="Download a report's PDF")
 def get_report_file(report_id: int):
     row = _get_report_row(report_id)
-    return FileResponse(row["path"], media_type="application/pdf", filename=f"report-{report_id}.pdf")
+    date = row["created_at"].split(" ")[0]
+    return FileResponse(row["path"], media_type="application/pdf", filename=f"sales-report-{date}.pdf")
