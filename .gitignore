@@ -5,5 +5,3 @@
 # every subdirectory in case any week-level .gitignore misses one
 .env
 .DS_Store
-
-week5/
