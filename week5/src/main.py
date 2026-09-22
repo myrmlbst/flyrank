@@ -1,3 +1,5 @@
+import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -5,13 +7,18 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from pydantic import ValidationError
+
+from schema import Book
 
 USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/myrmlbst/flyrank)"
 TIMEOUT_SECONDS = 10
 REQUEST_DELAY_SECONDS = 0.5
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 START_URL = "https://books.toscrape.com/"
 MAX_CATALOGUE_PAGES = 3
+PRICE_PATTERN = re.compile(r"[\d.]+")
 
 
 def fetch(url: str, cache_filename: str) -> str:
@@ -101,13 +108,50 @@ def extract_book(book_url: str, source_page: str) -> dict:
     }
 
 
+def normalize_price(price_text: str) -> float:
+    match = PRICE_PATTERN.search(price_text)
+    if not match:
+        raise ValueError(f"no numeric price found in {price_text!r}")
+    return float(match.group())
+
+
+def validate_and_store(raw_records: list[dict]) -> tuple[list[dict], list[dict]]:
+    seen_urls = set()
+    good_records = []
+    error_records = []
+
+    for raw in raw_records:
+        product_url = raw["product_url"]
+        if product_url in seen_urls:
+            continue
+        seen_urls.add(product_url)
+
+        try:
+            price_gbp = normalize_price(raw["price_text"])
+            book = Book(**{**raw, "price_gbp": price_gbp})
+            good_records.append(book.model_dump())
+        except (ValueError, ValidationError) as error:
+            error_records.append({"record": raw, "reason": str(error)})
+
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    (OUTPUT_DIR / "books.json").write_text(
+        json.dumps(good_records, indent=2), encoding="utf-8"
+    )
+    (OUTPUT_DIR / "errors.json").write_text(
+        json.dumps(error_records, indent=2), encoding="utf-8"
+    )
+
+    return good_records, error_records
+
+
 def main():
     books = discover_catalogue_pages()
 
     raw_records = [extract_book(book["url"], book["source_page"]) for book in books]
-
     print(f"detail_pages={len(raw_records)}")
-    print(raw_records[0])
+
+    good_records, error_records = validate_and_store(raw_records)
+    print(f"valid_records={len(good_records)} invalid_records={len(error_records)}")
 
 
 if __name__ == "__main__":
