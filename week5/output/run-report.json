@@ -1,8 +1,8 @@
 {
-  "start_time": "2026-09-22T14:35:02Z",
-  "duration_seconds": 115.95,
-  "pages_fetched": 63,
-  "cache_hits": 0,
+  "start_time": "2026-09-22T14:50:25Z",
+  "duration_seconds": 1.04,
+  "pages_fetched": 0,
+  "cache_hits": 63,
   "valid_records": 60,
   "invalid_records": 0,
   "failed_pages": 0,
